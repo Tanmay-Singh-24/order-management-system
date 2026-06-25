@@ -43,17 +43,9 @@ core — each chosen so every decision is simple to explain.
 
 ## 🏗️ Architecture
 
-```mermaid
-flowchart TD
-    subgraph app["oms · CLI application (C++17)"]
-        direction TB
-        M["main.cpp<br/><i>menu loop + input validation</i>"]
-        S["Service layer<br/><i>CustomerService · ProductService · OrderService</i>"]
-        D["Database<br/><i>RAII wrapper over mysqlx::Session</i>"]
-        M --> S --> D
-    end
-    D -->|"parameterized SQL + transactions<br/>(X Protocol · TLS · port 33060)"| DB[("MySQL 9.6<br/>InnoDB · ordersdb")]
-```
+<p align="center">
+  <img src="docs/architecture.svg" alt="Architecture: main.cpp -> service layer -> Database (RAII) -> MySQL over the X Protocol" width="720">
+</p>
 
 | Layer | Responsibility |
 |-------|----------------|
@@ -66,40 +58,9 @@ flowchart TD
 Third normal form. `order_items` is the **junction table** resolving the
 many-to-many between `orders` and `products`, and it snapshots `unit_price`.
 
-```mermaid
-erDiagram
-    customers   ||--o{ orders      : places
-    orders      ||--o{ order_items : contains
-    products    ||--o{ order_items : "appears in"
-
-    customers {
-        int id PK
-        varchar name
-        varchar email UK
-        timestamp created_at
-    }
-    products {
-        int id PK
-        varchar name
-        decimal price
-        int stock_quantity "CHECK >= 0"
-        timestamp created_at
-    }
-    orders {
-        int id PK
-        int customer_id FK
-        decimal total_amount
-        enum status "pending|confirmed|cancelled"
-        timestamp created_at
-    }
-    order_items {
-        int id PK
-        int order_id FK "ON DELETE CASCADE"
-        int product_id FK "ON DELETE RESTRICT"
-        int quantity "CHECK > 0"
-        decimal unit_price "snapshot"
-    }
-```
+<p align="center">
+  <img src="docs/schema.svg" alt="Schema: customers 1-N orders, products 1-N order_items, orders 1-N order_items (junction)" width="640">
+</p>
 
 ## 🧰 Tech stack
 
