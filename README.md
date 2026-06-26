@@ -1,14 +1,14 @@
 <div align="center">
 
-# 📦 Order Management System
+# Order Management System
 
 **A command-line Order Management System in modern C++, backed by MySQL —
 with atomic, all-or-nothing order placement.**
 
-![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)
-![MySQL](https://img.shields.io/badge/MySQL-9.6-4479A1?style=for-the-badge&logo=mysql&logoColor=white)
-![CMake](https://img.shields.io/badge/CMake-3.16%2B-064F8C?style=for-the-badge&logo=cmake&logoColor=white)
-![macOS](https://img.shields.io/badge/platform-macOS-000000?style=for-the-badge&logo=apple&logoColor=white)
+![C++17](https://img.shields.io/badge/C%2B%2B-17-1f1a14?style=for-the-badge&logo=cplusplus&logoColor=d4a056)
+![MySQL](https://img.shields.io/badge/MySQL-9.6-1f1a14?style=for-the-badge&logo=mysql&logoColor=d4a056)
+![CMake](https://img.shields.io/badge/CMake-3.16%2B-1f1a14?style=for-the-badge&logo=cmake&logoColor=d4a056)
+![macOS](https://img.shields.io/badge/platform-macOS-1f1a14?style=for-the-badge&logo=apple&logoColor=d4a056)
 
 </div>
 
@@ -26,43 +26,84 @@ It's a deliberately focused project: a clean 3NF schema, a thin RAII connection
 wrapper, parameterized queries throughout, and one real database transaction at the
 core — each chosen so every decision is simple to explain.
 
-## ✨ Highlights
+## Highlights
 
-- 🔒 **Atomic transactions** — `placeOrder` runs inside one transaction with
+- **Atomic transactions** — `placeOrder` runs inside one transaction with
   `commit`/`rollback`; a partial order can never be persisted.
-- 🛡️ **SQL-injection safe** — every query that touches user input uses bound
+- **SQL-injection safe** — every query that touches user input uses bound
   parameters (`.bind()`), never string concatenation.
-- 🧱 **3NF relational schema** — four InnoDB tables with foreign keys, `ON DELETE`
+- **3NF relational schema** — four InnoDB tables with foreign keys, `ON DELETE`
   rules, and `CHECK` constraints; a junction table resolves the orders↔products
   many-to-many.
-- 💰 **Correct money** — `DECIMAL` everywhere (never `FLOAT`); `unit_price` is
+- **Correct money** — `DECIMAL` everywhere (never `FLOAT`); `unit_price` is
   snapshotted per line so historical orders stay accurate.
-- ♻️ **RAII resource management** — the DB connection is opened and closed by an
+- **RAII resource management** — the DB connection is opened and closed by an
   object's lifetime; it can't leak.
-- 🧰 **Layered design** — presentation (`main`) → services → connection wrapper.
+- **Layered design** — presentation (`main`) → services → connection wrapper.
 
-## 🏗️ Architecture
+## Architecture
 
-<p align="center">
-  <img src="docs/architecture.svg" alt="Architecture: main.cpp -> service layer -> Database (RAII) -> MySQL over the X Protocol" width="720">
-</p>
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'background':'#171310','primaryColor':'#241b14','primaryBorderColor':'#9c7637','primaryTextColor':'#ece0cd','lineColor':'#b8893f','secondaryColor':'#2a2017','tertiaryColor':'#1d1610','clusterBkg':'#1b150e','clusterBorder':'#7a5e2f','edgeLabelBackground':'#171310','textColor':'#d8c7a4','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+flowchart TD
+    subgraph app["oms · CLI application (C++17)"]
+        direction TB
+        M["main.cpp<br/>menu loop + input validation"]
+        S["Service layer<br/>CustomerService · ProductService · OrderService"]
+        D["Database<br/>RAII wrapper over mysqlx::Session"]
+        M --> S --> D
+    end
+    D -->|"parameterized SQL + transactions<br/>(X Protocol · TLS · port 33060)"| DB[("MySQL 9.6<br/>InnoDB · ordersdb")]
+```
 
 | Layer | Responsibility |
 |-------|----------------|
-| `main.cpp` | Text menu, input validation, output formatting — **no SQL** |
+| `main.cpp` | Text menu, input validation, output formatting — no SQL |
 | Service classes | Data access per entity; all queries parameterized; `placeOrder` runs the transaction |
 | `Database` | Owns the connection (RAII), exposes `run()` + transaction control |
 
-## 🗄️ Database schema
+## Database schema
 
 Third normal form. `order_items` is the **junction table** resolving the
 many-to-many between `orders` and `products`, and it snapshots `unit_price`.
 
-<p align="center">
-  <img src="docs/schema.svg" alt="Schema: customers 1-N orders, products 1-N order_items, orders 1-N order_items (junction)" width="640">
-</p>
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'background':'#171310','primaryColor':'#241b14','primaryBorderColor':'#9c7637','primaryTextColor':'#ece0cd','lineColor':'#b8893f','mainBkg':'#241b14','nodeBorder':'#9c7637','attributeBackgroundColorOdd':'#221a12','attributeBackgroundColorEven':'#1b140d','textColor':'#ece0cd','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
+erDiagram
+    customers   ||--o{ orders      : places
+    orders      ||--o{ order_items : contains
+    products    ||--o{ order_items : "appears in"
 
-## 🧰 Tech stack
+    customers {
+        int id PK
+        varchar name
+        varchar email UK
+        timestamp created_at
+    }
+    products {
+        int id PK
+        varchar name
+        decimal price
+        int stock_quantity "CHECK >= 0"
+        timestamp created_at
+    }
+    orders {
+        int id PK
+        int customer_id FK
+        decimal total_amount
+        enum status "pending|confirmed|cancelled"
+        timestamp created_at
+    }
+    order_items {
+        int id PK
+        int order_id FK "ON DELETE CASCADE"
+        int product_id FK "ON DELETE RESTRICT"
+        int quantity "CHECK > 0"
+        decimal unit_price "snapshot"
+    }
+```
+
+## Tech stack
 
 | | |
 |---|---|
@@ -72,7 +113,7 @@ many-to-many between `orders` and `products`, and it snapshots `unit_price`.
 | **Build** | CMake (`find_package` + imported targets) |
 | **Platform** | macOS / Homebrew (project-local MySQL instance) |
 
-## 🚀 Getting started
+## Getting started
 
 > **Prerequisites** (macOS): `brew install cmake mysql mysql-connector-c++`
 > The database runs as a **project-local** instance (data in `db/data/`, classic
@@ -104,7 +145,7 @@ cmake --build build
 ./db/stop-db.sh
 ```
 
-## ▶️ See the headline feature
+## See the headline feature
 
 Request more of a product than is in stock, and the order is rejected **with the
 stock left completely untouched** — that's the transaction rolling back:
@@ -125,9 +166,7 @@ Re-list the products afterwards: stock is unchanged, and no `pending` order row 
 left behind. A successful order instead decrements stock, snapshots each price, sets
 the total, and marks the order `confirmed` — all in one commit.
 
-## 🧠 Design decisions
-
-<details open><summary><b>Why these choices (the "why did you do it this way?" answers)</b></summary>
+## Design decisions
 
 - **`DECIMAL(10,2)` for money, never `FLOAT`.** Binary floating point can't
   represent values like `0.10` exactly, so sums drift by fractions of a cent.
@@ -151,9 +190,7 @@ the total, and marks the order `confirmed` — all in one commit.
   closes it in the destructor, so the connection is always released — even when an
   exception unwinds the stack.
 
-</details>
-
-## 📁 Project layout
+## Project layout
 
 ```text
 oms/
