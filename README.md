@@ -2,8 +2,8 @@
 
 # Order Management System
 
-**A command-line Order Management System in modern C++, backed by MySQL —
-with atomic, all-or-nothing order placement.**
+**An oversell-safe order backend in modern C++ on MySQL: every order commits
+atomically or not at all, so stock counts can never be corrupted.**
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-1f1a14?style=for-the-badge&logo=cplusplus&logoColor=d4a056)
 ![MySQL](https://img.shields.io/badge/MySQL-9.6-1f1a14?style=for-the-badge&logo=mysql&logoColor=d4a056)
@@ -16,11 +16,13 @@ with atomic, all-or-nothing order placement.**
 
 ## Overview
 
-A small shop modelled end-to-end: **customers**, **products** with stock, and
-**orders** made of line items. The headline feature is **atomic order placement** —
-an order either fully succeeds (items recorded, stock decremented, total computed)
-or, if any product is short on stock, the **entire operation rolls back** and the
-database is left exactly as it was. No half-finished orders, ever.
+The problem it solves is **overselling** — confirming an order for stock that
+isn't actually there. A small shop is modelled end-to-end: **customers**,
+**products** with stock, and **orders** made of line items. The headline feature
+is **atomic order placement** — an order either fully succeeds (items recorded,
+stock decremented, total computed) or, if any product is short on stock, the
+**entire operation rolls back** and the database is left exactly as it was. No
+half-finished orders, ever.
 
 It's a deliberately focused project: a clean 3NF schema, a thin RAII connection
 wrapper, parameterized queries throughout, and one real database transaction at the
@@ -65,7 +67,11 @@ flowchart TD
 ## Database schema
 
 Third normal form. `order_items` is the **junction table** resolving the
-many-to-many between `orders` and `products`, and it snapshots `unit_price`.
+many-to-many between `orders` and `products`, and it snapshots `unit_price`. A
+`UNIQUE(order_id, product_id)` constraint makes each line's natural key explicit
+(one line per product per order). `orders.total_amount` is a deliberate stored
+snapshot — like `unit_price`, it records the amount actually charged, so it is a
+financial fact rather than a normalization slip.
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'background':'#171310','primaryColor':'#241b14','primaryBorderColor':'#9c7637','primaryTextColor':'#ece0cd','lineColor':'#b8893f','mainBkg':'#241b14','nodeBorder':'#9c7637','attributeBackgroundColorOdd':'#221a12','attributeBackgroundColorEven':'#1b140d','textColor':'#ece0cd','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
@@ -145,6 +151,21 @@ cmake --build build
 ./db/stop-db.sh
 ```
 
+> Credentials are read from the environment — `OMS_DB_HOST`, `OMS_DB_PORT`,
+> `OMS_DB_USER`, `OMS_DB_PASSWORD`, `OMS_DB_NAME` — and fall back to the local-dev
+> values above, so nothing sensitive is baked into the binary.
+
+## Testing
+
+```bash
+./scripts/verify.sh
+```
+
+Resets the schema and seed, builds, drives the CLI through a valid order and an
+oversell order, then asserts the final stock, the order count, and the exact
+`DECIMAL` total straight from SQL — an automated proof that commit and rollback
+behave correctly.
+
 ## See the headline feature
 
 Request more of a product than is in stock, and the order is rejected **with the
@@ -190,6 +211,23 @@ the total, and marks the order `confirmed` — all in one commit.
   closes it in the destructor, so the connection is always released — even when an
   exception unwinds the stack.
 
+## Limitations & scaling
+
+Deliberately scoped to a single-user CLI. The honest next steps under real load:
+
+- **Concurrency.** Two clients could both pass the in-app stock check on the same
+  units. Data stays correct — InnoDB row locks serialize the decrements and the
+  `CHECK` forces the loser to roll back — but to reject cleanly instead of erroring
+  I'd take `SELECT … FOR UPDATE` locks on the product rows being ordered.
+- **~10x users.** The single shared connection and lack of pooling bottleneck
+  first; I'd add a connection pool and move the database behind a service rather
+  than embedding it in the client.
+- **~100x / large history.** `listOrders` returns everything — reads need
+  `LIMIT`/keyset pagination, and heavy reporting would move to read replicas.
+
+None are built here because they'd add machinery a single-user CLI can't justify —
+but each is a known, bounded step rather than a rewrite.
+
 ## Project layout
 
 ```text
@@ -201,6 +239,8 @@ oms/
 │   ├── seed.sql            # sample customers + products
 │   ├── start-db.sh         # start the project-local MySQL instance
 │   └── stop-db.sh          # stop it
+├── scripts/
+│   └── verify.sh           # end-to-end commit/rollback test
 └── src/
     ├── main.cpp            # menu loop + I/O
     ├── Database.{h,cpp}    # RAII session wrapper + parameterized run() + txn control
