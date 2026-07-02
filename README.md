@@ -30,18 +30,23 @@ core — each chosen so every decision is simple to explain.
 
 ## Highlights
 
-- **Atomic transactions** — `placeOrder` runs inside one transaction with
-  `commit`/`rollback`; a partial order can never be persisted.
-- **SQL-injection safe** — every query that touches user input uses bound
-  parameters (`.bind()`), never string concatenation.
-- **3NF relational schema** — four InnoDB tables with foreign keys, `ON DELETE`
-  rules, and `CHECK` constraints; a junction table resolves the orders↔products
-  many-to-many.
-- **Correct money** — `DECIMAL` everywhere (never `FLOAT`); `unit_price` is
-  snapshotted per line so historical orders stay accurate.
-- **RAII resource management** — the DB connection is opened and closed by an
-  object's lifetime; it can't leak.
-- **Layered design** — presentation (`main`) → services → connection wrapper.
+- **3NF schema, integrity enforced in the database** — `customers`, `products`,
+  `orders`, and an `order_items` junction table, with foreign keys and explicit
+  `ON DELETE` rules (CASCADE/RESTRICT) that prevent orphaned rows and update
+  anomalies.
+- **Atomic order placement** — order creation and stock decrements run in a single
+  InnoDB transaction; on any failure (e.g. insufficient stock) the whole thing
+  rolls back, so the database is never left half-written.
+- **Injection-safe and least-privilege** — every user-input query is parameterized
+  (never string-concatenated), and the app connects through a DML-only database
+  account to reduce blast radius.
+- **Correctness by construction** — `DECIMAL` money end to end (no floating-point
+  rounding), a `CHECK (stock >= 0)` constraint as a database-level safety net, and
+  an automated end-to-end test that verifies both commit and rollback.
+- **RAII resource management** — the connection is opened and closed by object
+  lifetime, so it's released even when an exception unwinds the stack.
+- **Layered design** — presentation (`main`) → service classes → connection
+  wrapper; no SQL outside the data-access layer.
 
 ## Architecture
 
