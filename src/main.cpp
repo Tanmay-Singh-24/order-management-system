@@ -4,6 +4,7 @@
 // results. All database work is delegated to the service classes; this file does
 // no SQL itself.
 
+#include <algorithm>
 #include <cctype>
 #include <iomanip>
 #include <iostream>
@@ -132,7 +133,18 @@ void doPlaceOrder(OrderService& orders) {
         const int productId = readInt("    Product id (0 to finish): ");
         if (productId == 0) break;
         const int quantity = readInt("    Quantity: ");
-        items.emplace_back(productId, quantity);
+        // Merge a repeated product into its existing line rather than adding a
+        // second one. The schema forbids duplicate (order_id, product_id) pairs,
+        // so we consolidate here instead of letting the insert fail mid-transaction.
+        auto existing = std::find_if(items.begin(), items.end(),
+            [productId](const std::pair<int, int>& line) {
+                return line.first == productId;
+            });
+        if (existing != items.end()) {
+            existing->second += quantity;
+        } else {
+            items.emplace_back(productId, quantity);
+        }
     }
 
     if (items.empty()) {

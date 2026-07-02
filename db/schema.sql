@@ -78,5 +78,9 @@ CREATE TABLE order_items (
     CONSTRAINT fk_items_product
         FOREIGN KEY (product_id) REFERENCES products(id)
         ON DELETE RESTRICT,
+    -- A product may appear at most once per order: repeated products are merged
+    -- into a single line (with summed quantity) by the application. This makes the
+    -- (order_id, product_id) pair a genuine natural key for a line item.
+    CONSTRAINT uq_order_product UNIQUE (order_id, product_id),
     CONSTRAINT chk_items_qty_positive CHECK (quantity > 0)
 ) ENGINE=InnoDB;
