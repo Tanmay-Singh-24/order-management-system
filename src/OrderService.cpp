@@ -75,22 +75,21 @@ int OrderService::placeOrder(int customerId,
             customerId);
         const int orderId = static_cast<int>(inserted.getAutoIncrementValue());
 
-        double total = 0.0;
-
         // 2. Process each requested line item.
         for (const auto& [productId, quantity] : items) {
             if (quantity <= 0) {
                 throw std::runtime_error("Quantity must be a positive number.");
             }
 
-            // Read the product's current price + stock. Scoped in its own block so
-            // the result set is fully consumed before we issue the next statement.
+            // Read the product's name + stock. Scoped in its own block so the result
+            // set is fully consumed before we issue the next statement. We do NOT
+            // read the price into a C++ variable: money never touches a binary
+            // floating-point value. The price is snapshotted server-side below.
             std::string productName;
-            double unitPrice = 0.0;
             int stock = 0;
             {
                 auto pr = db_.run(
-                    "SELECT name, price, stock_quantity FROM products WHERE id = ?",
+                    "SELECT name, stock_quantity FROM products WHERE id = ?",
                     productId);
                 mysqlx::Row product = pr.fetchOne();
                 if (!product) {
@@ -98,8 +97,7 @@ int OrderService::placeOrder(int customerId,
                         "Product id " + std::to_string(productId) + " does not exist.");
                 }
                 productName = product[0].get<std::string>();
-                unitPrice = product[1].get<double>();   // DECIMAL -> double
-                stock = product[2].get<int>();
+                stock = product[1].get<int>();
             }
 
             // Application-level stock check: gives a clear, friendly error message.
@@ -109,13 +107,14 @@ int OrderService::placeOrder(int customerId,
                     std::to_string(stock) + ", need " + std::to_string(quantity) + ".");
             }
 
-            // Insert the line item, SNAPSHOTTING unit_price from what we just read.
-            // The order records what the customer actually paid, independent of any
-            // future price change.
+            // Insert the line item, SNAPSHOTTING unit_price straight from the product
+            // row (INSERT ... SELECT). The order records what the customer paid,
+            // independent of any future price change — and the value stays DECIMAL
+            // end to end, never converted to floating point in the application.
             db_.run(
                 "INSERT INTO order_items (order_id, product_id, quantity, unit_price) "
-                "VALUES (?, ?, ?, ?)",
-                orderId, productId, quantity, unitPrice);
+                "SELECT ?, id, ?, price FROM products WHERE id = ?",
+                orderId, quantity, productId);
 
             // Decrement stock. The CHECK (stock_quantity >= 0) constraint is the
             // SECOND safety net: if the application check above were ever wrong (or
@@ -131,14 +130,18 @@ int OrderService::placeOrder(int customerId,
             db_.run(
                 "UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?",
                 quantity, productId);
-
-            total += unitPrice * static_cast<double>(quantity);
         }
 
-        // 3. Finalize: write the accumulated total and mark the order confirmed.
+        // 3. Finalize: compute the order total from the line items and confirm it.
+        // The sum is computed BY THE DATABASE over DECIMAL columns, so the total is
+        // exact — the money arithmetic never happens in application floating point.
         db_.run(
-            "UPDATE orders SET total_amount = ?, status = 'confirmed' WHERE id = ?",
-            total, orderId);
+            "UPDATE orders "
+            "SET total_amount = (SELECT COALESCE(SUM(quantity * unit_price), 0) "
+            "                    FROM order_items WHERE order_id = ?), "
+            "    status = 'confirmed' "
+            "WHERE id = ?",
+            orderId, orderId);
 
         // 4. COMMIT: make every change above permanent and visible, all at once.
         db_.commit();
