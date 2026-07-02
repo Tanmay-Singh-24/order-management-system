@@ -22,13 +22,18 @@ namespace {
 
 // ---- Input helpers: never crash on bad input; just re-prompt. --------------
 
-// Reads one line. End-of-input (Ctrl-D) cleanly exits the program.
+// Thrown when the user signals end-of-input (Ctrl-D). It is caught in main() so
+// the stack unwinds normally — which means the Database destructor runs and the
+// connection closes cleanly. (Calling std::exit here would skip that RAII
+// cleanup, contradicting the whole point of the wrapper.)
+struct EndOfInput {};
+
+// Reads one line, or throws EndOfInput on Ctrl-D.
 std::string readLine(const std::string& prompt) {
     std::cout << prompt;
     std::string line;
     if (!std::getline(std::cin, line)) {
-        std::cout << "\n";
-        std::exit(0);
+        throw EndOfInput{};
     }
     return line;
 }
@@ -222,6 +227,10 @@ int main() {
                 std::cerr << "  Error: " << ex.what() << "\n";
             }
         }
+    } catch (const EndOfInput&) {
+        // Ctrl-D at any prompt: exit cleanly. Unwinding here runs ~Database().
+        std::cout << "\nGoodbye.\n";
+        return 0;
     } catch (const mysqlx::Error& err) {
         std::cerr << "Fatal database error: " << err.what() << "\n";
         return 1;
