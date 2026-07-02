@@ -38,6 +38,24 @@ std::string readLine(const std::string& prompt) {
     return line;
 }
 
+// Strips leading/trailing whitespace so "   " and "" are both rejected below.
+std::string trim(const std::string& s) {
+    const auto first = s.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return "";
+    const auto last = s.find_last_not_of(" \t\r\n");
+    return s.substr(first, last - first + 1);
+}
+
+// Reads a required text field: trims, and re-prompts until non-empty. Keeps
+// blank names/emails from ever reaching the database.
+std::string readRequired(const std::string& prompt, const std::string& field) {
+    while (true) {
+        const std::string value = trim(readLine(prompt));
+        if (!value.empty()) return value;
+        std::cout << "  " << field << " cannot be empty.\n";
+    }
+}
+
 // Reads a whole number, re-prompting until the entire line is a valid integer.
 int readInt(const std::string& prompt) {
     while (true) {
@@ -85,8 +103,8 @@ std::string money(double value) {
 // ---- Menu actions ----------------------------------------------------------
 
 void doAddCustomer(CustomerService& customers) {
-    const std::string name = readLine("  Name: ");
-    const std::string email = readLine("  Email: ");
+    const std::string name = readRequired("  Name: ", "Name");
+    const std::string email = readRequired("  Email: ", "Email");
     const int id = customers.addCustomer(name, email);
     std::cout << "  Added customer #" << id << ".\n";
 }
@@ -106,7 +124,7 @@ void doListCustomers(CustomerService& customers) {
 }
 
 void doAddProduct(ProductService& products) {
-    const std::string name = readLine("  Name: ");
+    const std::string name = readRequired("  Name: ", "Name");
     const double price = readMoney("  Price: ");
     const int stock = readInt("  Stock quantity: ");
     const int id = products.addProduct(name, price, stock);
