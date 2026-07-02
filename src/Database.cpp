@@ -1,14 +1,22 @@
 #include "Database.h"
 
+#include <cstdlib>
+#include <string>
+
 namespace {
-// All connection settings in ONE place. For a real deployment these would come
-// from environment variables or a config file rather than being compiled in;
-// for a local single-user demo, centralizing them here is clear and sufficient.
-const char* kHost = "127.0.0.1";  // loopback only
-const int   kPort = 33060;        // X Protocol port (the X DevAPI speaks this)
-const char* kUser = "orderapp";   // least-privilege account (DML only on ordersdb)
-const char* kPass = "orderpass";  // dev-only password
-const char* kDb   = "ordersdb";
+// Connection settings are read from environment variables so credentials are not
+// baked into the binary or committed to source control. The fallbacks are the
+// documented local-dev defaults (the project-local instance on the X Protocol
+// port), so the app runs out of the box while a real deployment overrides them.
+std::string envOr(const char* key, const char* fallback) {
+    const char* value = std::getenv(key);
+    return value ? std::string(value) : std::string(fallback);
+}
+
+int envPort() {
+    const char* value = std::getenv("OMS_DB_PORT");
+    return value ? std::stoi(value) : 33060;  // X Protocol port
+}
 }  // namespace
 
 // The member `session_` is constructed in the initializer list, which is what
@@ -16,11 +24,11 @@ const char* kDb   = "ordersdb";
 // here. If it fails, the constructor throws and no half-built Database escapes.
 Database::Database()
     : session_(mysqlx::SessionSettings(
-          mysqlx::SessionOption::HOST, kHost,
-          mysqlx::SessionOption::PORT, kPort,
-          mysqlx::SessionOption::USER, kUser,
-          mysqlx::SessionOption::PWD,  kPass,
-          mysqlx::SessionOption::DB,   kDb)) {}
+          mysqlx::SessionOption::HOST, envOr("OMS_DB_HOST", "127.0.0.1"),
+          mysqlx::SessionOption::PORT, envPort(),
+          mysqlx::SessionOption::USER, envOr("OMS_DB_USER", "orderapp"),
+          mysqlx::SessionOption::PWD,  envOr("OMS_DB_PASSWORD", "orderpass"),
+          mysqlx::SessionOption::DB,   envOr("OMS_DB_NAME", "ordersdb"))) {}
 
 void Database::beginTransaction() { session_.startTransaction(); }
 void Database::commit()           { session_.commit(); }
