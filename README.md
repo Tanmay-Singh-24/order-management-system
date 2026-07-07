@@ -1,52 +1,34 @@
-<div align="center">
-
 # Order Management System
 
-**An oversell-safe order backend in modern C++ on MySQL: every order commits
-atomically or not at all, so stock counts can never be corrupted.**
+A CLI order management backend written in C++17 on top of MySQL. The main goal
+was to prevent overselling: order placement runs as a single transaction, so an
+order either commits fully (line items written, stock decremented, total
+computed) or rolls back and leaves the database untouched.
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-1f1a14?style=for-the-badge&logo=cplusplus&logoColor=d4a056)
 ![MySQL](https://img.shields.io/badge/MySQL-9.6-1f1a14?style=for-the-badge&logo=mysql&logoColor=d4a056)
 ![CMake](https://img.shields.io/badge/CMake-3.16%2B-1f1a14?style=for-the-badge&logo=cmake&logoColor=d4a056)
 ![macOS](https://img.shields.io/badge/platform-macOS-1f1a14?style=for-the-badge&logo=apple&logoColor=d4a056)
 
-</div>
+## Features
 
----
-
-## Overview
-
-The problem it solves is **overselling** — confirming an order for stock that
-isn't actually there. A small shop is modelled end-to-end: **customers**,
-**products** with stock, and **orders** made of line items. The headline feature
-is **atomic order placement** — an order either fully succeeds (items recorded,
-stock decremented, total computed) or, if any product is short on stock, the
-**entire operation rolls back** and the database is left exactly as it was. No
-half-finished orders, ever.
-
-It's a deliberately focused project: a clean 3NF schema, a thin RAII connection
-wrapper, parameterized queries throughout, and one real database transaction at the
-core — each chosen so every decision is simple to explain.
-
-## Highlights
-
-- **3NF schema, integrity enforced in the database** — `customers`, `products`,
-  `orders`, and an `order_items` junction table, with foreign keys and explicit
-  `ON DELETE` rules (CASCADE/RESTRICT) that prevent orphaned rows and update
-  anomalies.
-- **Atomic order placement** — order creation and stock decrements run in a single
-  InnoDB transaction; on any failure (e.g. insufficient stock) the whole thing
-  rolls back, so the database is never left half-written.
-- **Injection-safe and least-privilege** — every user-input query is parameterized
-  (never string-concatenated), and the app connects through a DML-only database
-  account to reduce blast radius.
-- **Correctness by construction** — `DECIMAL` money end to end (no floating-point
-  rounding), a `CHECK (stock >= 0)` constraint as a database-level safety net, and
-  an automated end-to-end test that verifies both commit and rollback.
-- **RAII resource management** — the connection is opened and closed by object
-  lifetime, so it's released even when an exception unwinds the stack.
-- **Layered design** — presentation (`main`) → service classes → connection
-  wrapper; no SQL outside the data-access layer.
+- 3NF schema across `customers`, `products`, `orders`, and an `order_items`
+  junction table, with foreign keys and per-relationship `ON DELETE` rules
+  (CASCADE for order lines, RESTRICT for customers/products referenced by
+  history).
+- Atomic order placement: order creation, line-item inserts, and stock
+  decrements happen inside one InnoDB transaction with rollback on any failure,
+  e.g. insufficient stock.
+- All queries that take user input use bound parameters, never string
+  concatenation, and the app connects through a DML-only MySQL account instead
+  of root.
+- Money is stored and summed as `DECIMAL` in SQL (the total is computed by the
+  database, not in C++ floating point). A `CHECK (stock_quantity >= 0)`
+  constraint backs up the application-level stock check.
+- The database connection lives in an RAII wrapper, so it closes even when an
+  exception unwinds the stack.
+- An end-to-end test script drives the CLI through a valid order and an
+  oversell attempt and asserts the resulting database state.
 
 ## Architecture
 
@@ -65,18 +47,18 @@ flowchart TD
 
 | Layer | Responsibility |
 |-------|----------------|
-| `main.cpp` | Text menu, input validation, output formatting — no SQL |
+| `main.cpp` | Text menu, input validation, output formatting. No SQL here. |
 | Service classes | Data access per entity; all queries parameterized; `placeOrder` runs the transaction |
 | `Database` | Owns the connection (RAII), exposes `run()` + transaction control |
 
 ## Database schema
 
-Third normal form. `order_items` is the **junction table** resolving the
-many-to-many between `orders` and `products`, and it snapshots `unit_price`. A
-`UNIQUE(order_id, product_id)` constraint makes each line's natural key explicit
-(one line per product per order). `orders.total_amount` is a deliberate stored
-snapshot — like `unit_price`, it records the amount actually charged, so it is a
-financial fact rather than a normalization slip.
+`order_items` is the junction table for the many-to-many between `orders` and
+`products`. It snapshots `unit_price` at order time, and a
+`UNIQUE(order_id, product_id)` constraint allows one line per product per
+order. `orders.total_amount` is also a stored snapshot: like `unit_price`, it
+records what was actually charged, which is why it is kept even though it can
+be derived from the line items.
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'background':'#171310','primaryColor':'#241b14','primaryBorderColor':'#9c7637','primaryTextColor':'#ece0cd','lineColor':'#b8893f','mainBkg':'#241b14','nodeBorder':'#9c7637','attributeBackgroundColorOdd':'#221a12','attributeBackgroundColorEven':'#1b140d','textColor':'#ece0cd','fontFamily':'ui-sans-serif, system-ui, sans-serif'}}}%%
@@ -118,24 +100,25 @@ erDiagram
 
 | | |
 |---|---|
-| **Language** | C++17 |
-| **Database** | MySQL 9.6 (InnoDB engine) |
-| **DB access** | MySQL Connector/C++ 9.7 — X DevAPI (`mysqlx::Session`) |
-| **Build** | CMake (`find_package` + imported targets) |
-| **Platform** | macOS / Homebrew (project-local MySQL instance) |
+| Language | C++17 |
+| Database | MySQL 9.6 (InnoDB) |
+| DB access | MySQL Connector/C++ 9.7, X DevAPI (`mysqlx::Session`) |
+| Build | CMake (`find_package` + imported targets) |
+| Platform | macOS / Homebrew (project-local MySQL instance) |
 
 ## Getting started
 
-> **Prerequisites** (macOS): `brew install cmake mysql mysql-connector-c++`
-> The database runs as a **project-local** instance (data in `db/data/`, classic
-> port `3307`, X Protocol port `33060`) — started/stopped manually, never as a
-> system service.
+Prerequisites (macOS): `brew install cmake mysql mysql-connector-c++`
+
+The database runs as a project-local instance (data lives in `db/data/`,
+classic port 3307, X Protocol port 33060). It is started and stopped manually,
+not installed as a system service.
 
 ```bash
 # 1) Start the project-local MySQL instance
 ./db/start-db.sh
 
-# 2) First time only — create the database + least-privilege app user (as root)
+# 2) First time only: create the database + app user (as root)
 SOCK="$(pwd)/db/mysql.sock"
 /opt/homebrew/opt/mysql/bin/mysql --socket="$SOCK" -u root <<'SQL'
 CREATE DATABASE IF NOT EXISTS ordersdb CHARACTER SET utf8mb4;
@@ -156,9 +139,9 @@ cmake --build build
 ./db/stop-db.sh
 ```
 
-> Credentials are read from the environment — `OMS_DB_HOST`, `OMS_DB_PORT`,
-> `OMS_DB_USER`, `OMS_DB_PASSWORD`, `OMS_DB_NAME` — and fall back to the local-dev
-> values above, so nothing sensitive is baked into the binary.
+Connection settings are read from `OMS_DB_HOST`, `OMS_DB_PORT`, `OMS_DB_USER`,
+`OMS_DB_PASSWORD`, and `OMS_DB_NAME`, falling back to the local-dev values
+above, so no credentials are baked into the binary.
 
 ## Testing
 
@@ -166,15 +149,15 @@ cmake --build build
 ./scripts/verify.sh
 ```
 
-Resets the schema and seed, builds, drives the CLI through a valid order and an
-oversell order, then asserts the final stock, the order count, and the exact
-`DECIMAL` total straight from SQL — an automated proof that commit and rollback
-behave correctly.
+Resets the schema and seed data, builds, then drives the CLI through a valid
+order and an oversell attempt. It asserts the final stock numbers, the order
+count, and the exact `DECIMAL` total queried from SQL, which checks both the
+commit path and the rollback path.
 
-## See the headline feature
+## Rollback demo
 
-Request more of a product than is in stock, and the order is rejected **with the
-stock left completely untouched** — that's the transaction rolling back:
+Ordering more than the available stock rejects the order and leaves stock
+untouched:
 
 ```text
 === Order Management System ===
@@ -188,50 +171,45 @@ Choose an option: 5
   Error: Insufficient stock for 'Webcam 1080p': have 3, need 10.
 ```
 
-Re-list the products afterwards: stock is unchanged, and no `pending` order row was
-left behind. A successful order instead decrements stock, snapshots each price, sets
-the total, and marks the order `confirmed` — all in one commit.
+Listing products afterwards shows unchanged stock, and no `pending` order row
+is left behind. A successful order decrements stock, snapshots each price,
+sets the total, and marks the order `confirmed` in one commit.
 
-## Design decisions
+## Design notes
 
-- **`DECIMAL(10,2)` for money, never `FLOAT`.** Binary floating point can't
-  represent values like `0.10` exactly, so sums drift by fractions of a cent.
-  `DECIMAL` is exact base-10 fixed point — correct for currency.
-- **Parameterized queries everywhere (`.bind()`).** User input is sent to the
-  server separately from the SQL text, so it can never be parsed as SQL — this
-  structurally eliminates SQL injection (vs. building queries by concatenation).
-- **Order placement is one transaction.** Inserting the order, inserting each line
-  item, and decrementing stock must happen together. `startTransaction … commit`
-  with `rollback` on failure gives **atomicity**: the DB is never left with a
-  half-finished order.
-- **Stock guarded twice.** The app checks stock before each decrement (for a clear
-  message), and a `CHECK (stock_quantity >= 0)` constraint backs it up at the
-  database level — even a logic bug or a race can't drive stock negative.
-- **`unit_price` is snapshotted** into `order_items` at order time, so past orders
-  remain accurate if a product's price later changes.
-- **Least-privilege DB user.** The app connects as `orderapp`, which has only
-  `SELECT/INSERT/UPDATE/DELETE` on `ordersdb` — no DDL, no other databases. Limits
-  the blast radius if the app is ever compromised.
-- **RAII connection wrapper.** `Database` opens the session in its constructor and
-  closes it in the destructor, so the connection is always released — even when an
-  exception unwinds the stack.
+- `DECIMAL(10,2)` for money instead of `FLOAT`: binary floating point cannot
+  represent values like 0.10 exactly, so sums drift. `DECIMAL` is exact
+  fixed-point. For the same reason the order total is summed by the database
+  over the DECIMAL columns rather than accumulated in a C++ double.
+- Parameterized queries: user input travels to the server separately from the
+  SQL text, so it is never parsed as SQL. This removes the injection class of
+  bugs rather than filtering for it.
+- One transaction for order placement, because the order row, its line items,
+  and the stock updates only make sense together. Any failure inside the block
+  triggers `rollback` and the caller just sees the error message.
+- Stock is guarded twice: the application checks stock first so the user gets a
+  readable message, and the `CHECK` constraint means that even a bug or a race
+  could not push stock below zero. The same pattern is used for duplicate
+  emails (application pre-check for the message, `UNIQUE` for the guarantee).
+- The app connects as `orderapp`, which has only SELECT/INSERT/UPDATE/DELETE on
+  `ordersdb`. Schema changes are done as root; a compromised app account cannot
+  drop tables or touch other databases.
+- The `Database` class opens the session in its constructor and relies on the
+  destructor to close it, so cleanup also happens when an exception propagates.
 
-## Limitations & scaling
+## Limitations / future work
 
-Deliberately scoped to a single-user CLI. The honest next steps under real load:
+The scope is a single-user CLI, so several things are intentionally not built:
 
-- **Concurrency.** Two clients could both pass the in-app stock check on the same
-  units. Data stays correct — InnoDB row locks serialize the decrements and the
-  `CHECK` forces the loser to roll back — but to reject cleanly instead of erroring
-  I'd take `SELECT … FOR UPDATE` locks on the product rows being ordered.
-- **~10x users.** The single shared connection and lack of pooling bottleneck
-  first; I'd add a connection pool and move the database behind a service rather
-  than embedding it in the client.
-- **~100x / large history.** `listOrders` returns everything — reads need
-  `LIMIT`/keyset pagination, and heavy reporting would move to read replicas.
-
-None are built here because they'd add machinery a single-user CLI can't justify —
-but each is a known, bounded step rather than a rewrite.
+- Concurrency: two clients could both pass the in-app stock check for the same
+  units. The data would still end up correct (row locks serialize the updates
+  and the `CHECK` constraint rolls the loser back), but the failing client gets
+  a raw constraint error. Handling this properly means `SELECT ... FOR UPDATE`
+  on the product rows during order placement.
+- Connection pooling: the app holds one connection for its whole session, which
+  would not survive many concurrent users.
+- Pagination: `listOrders` returns the full history, which needs `LIMIT`/keyset
+  pagination once the table grows.
 
 ## Project layout
 
