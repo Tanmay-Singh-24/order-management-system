@@ -75,6 +75,17 @@ int readInt(const std::string& prompt) {
     }
 }
 
+// Reads a non-negative whole number (e.g. a stock quantity), re-prompting until
+// valid. Rejecting negatives here means the DB's CHECK (stock >= 0) constraint
+// never has to reject a value the user could have been warned about at input.
+int readCount(const std::string& prompt) {
+    while (true) {
+        const int value = readInt(prompt);
+        if (value >= 0) return value;
+        std::cout << "  Please enter 0 or a positive number.\n";
+    }
+}
+
 // Reads a non-negative decimal, re-prompting until valid.
 double readMoney(const std::string& prompt) {
     while (true) {
@@ -126,7 +137,7 @@ void doListCustomers(CustomerService& customers) {
 void doAddProduct(ProductService& products) {
     const std::string name = readRequired("  Name: ", "Name");
     const double price = readMoney("  Price: ");
-    const int stock = readInt("  Stock quantity: ");
+    const int stock = readCount("  Stock quantity: ");
     const int id = products.addProduct(name, price, stock);
     std::cout << "  Added product #" << id << ".\n";
 }
